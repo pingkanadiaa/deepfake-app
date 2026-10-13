@@ -1,0 +1,11 @@
+streamlit
+torch
+torchvision
+torchaudio
+timm
+opencv-python-headless
+librosa
+numpy
+pandas
+pillow
+huggingface_hub

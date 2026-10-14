@@ -35,10 +35,10 @@ SAMPLES_DIR = "samples"       # samples/<nama_kelas>/*.mp4
 
 # Bobot model diambil dari Hugging Face jika file lokal tidak ada.
 # GANTI dengan repo kamu, format "username/nama-repo".
-HF_REPO = "USERNAME/deepfake-model-weights"
+HF_REPO = "pingkannadia/deepfake-model-weights"
 # Dataset contoh uji di Hugging Face (repo tipe Dataset, boleh Private).
 # Struktur: <nama_kelas>/<video>.mp4. Kosongkan ("") jika hanya pakai folder lokal 'samples/'.
-HF_SAMPLES_REPO = "USERNAME/deepfake-samples"
+HF_SAMPLES_REPO = "pingkannadia/deepfake-samples"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 

@@ -35,8 +35,10 @@ SAMPLES_DIR = "samples"       # samples/<nama_kelas>/*.mp4
 
 # Bobot model diambil dari Hugging Face jika file lokal tidak ada.
 # GANTI dengan repo kamu, format "username/nama-repo".
-HF_REPO = "pingkannadia/deepfake-model-weights"
-HF_SAMPLES_REPO = "pingkannadia/deepfake-samples"
+HF_REPO = "USERNAME/deepfake-model-weights"
+# Dataset contoh uji di Hugging Face (repo tipe Dataset, boleh Private).
+# Struktur: <nama_kelas>/<video>.mp4. Kosongkan ("") jika hanya pakai folder lokal 'samples/'.
+HF_SAMPLES_REPO = "USERNAME/deepfake-samples"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -142,7 +144,10 @@ def load_model(model_name):
     path = MODEL_FILES[model_name]
     if not os.path.exists(path):
         from huggingface_hub import hf_hub_download
-        token = st.secrets.get("HF_TOKEN", None) if hasattr(st, "secrets") else None
+        try:
+            token = st.secrets["HF_TOKEN"]
+        except Exception:
+            token = None          # repo publik: tidak perlu token
         path = hf_hub_download(HF_REPO, os.path.basename(path), token=token)
     state = torch.load(path, map_location=DEVICE)
     if isinstance(state, dict) and "model_state" in state:   # jika memakai file checkpoint_epXX.pth
@@ -179,21 +184,42 @@ def extract_frames(path):
     return torch.stack(tensors).unsqueeze(0)                     # (1, T, 3, H, W)
 
 
+def _load_audio_ffmpeg(path):
+    """Ekstrak audio mono 16 kHz (maks 4 dtk) lewat ffmpeg. Paling andal di Streamlit Cloud."""
+    import subprocess, shutil
+    exe = shutil.which("ffmpeg")
+    if exe is None:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [exe, "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(SR),
+           "-t", "4", "-f", "f32le", "-"]
+    out = subprocess.run(cmd, capture_output=True, check=True).stdout
+    return np.frombuffer(out, dtype=np.float32).copy()
+
+
 def extract_waveform(path):
-    try:
-        wav, sr = torchaudio.load(path, format="mp4")
-        if wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-        if sr != SR:
-            wav = torchaudio.transforms.Resample(sr, SR)(wav)
-        y = wav.squeeze(0).numpy().astype(np.float32)
-    except Exception:
+    y = None
+    for loader in ("ffmpeg", "torchaudio", "librosa"):
         try:
-            import librosa
-            y, _ = librosa.load(path, sr=SR, mono=True)
-            y = y.astype(np.float32)
+            if loader == "ffmpeg":
+                y = _load_audio_ffmpeg(path)
+            elif loader == "torchaudio":
+                wav, sr = torchaudio.load(path, format="mp4")
+                if wav.shape[0] > 1:
+                    wav = wav.mean(dim=0, keepdim=True)
+                if sr != SR:
+                    wav = torchaudio.transforms.Resample(sr, SR)(wav)
+                y = wav.squeeze(0).numpy().astype(np.float32)
+            else:
+                import librosa
+                y, _ = librosa.load(path, sr=SR, mono=True)
+                y = y.astype(np.float32)
+            if y is not None and len(y) > 0:
+                break
         except Exception:
-            return None
+            y = None
+    if y is None:
+        return None
     if len(y) == 0:
         return None
     y = np.pad(y, (0, AUDIO_LEN - len(y))) if len(y) < AUDIO_LEN else y[:AUDIO_LEN]
@@ -231,16 +257,46 @@ st.title("Klasifikasi Deepfake Audio-Visual")
 sumber = st.radio("Sumber video", ["Contoh data uji", "Unggah video"], horizontal=True)
 video_path, actual = None, None
 
+def _hf_token():
+    try:
+        return st.secrets["HF_TOKEN"]
+    except Exception:
+        return None
+
+@st.cache_data(show_spinner=False)
+def list_samples():
+    """Return {kelas: [nama_file,...]} dari folder lokal atau dataset HF."""
+    out = {}
+    if os.path.isdir(SAMPLES_DIR):
+        for c in CLASSES:
+            d = os.path.join(SAMPLES_DIR, c)
+            if os.path.isdir(d):
+                out[c] = sorted(f for f in os.listdir(d) if f.lower().endswith(".mp4"))
+    if not out and HF_SAMPLES_REPO and not HF_SAMPLES_REPO.startswith("USERNAME"):
+        from huggingface_hub import list_repo_files
+        for p in list_repo_files(HF_SAMPLES_REPO, repo_type="dataset", token=_hf_token()):
+            parts = p.split("/")
+            if len(parts) == 2 and parts[0] in CLASSES and p.lower().endswith(".mp4"):
+                out.setdefault(parts[0], []).append(parts[1])
+        out = {k: sorted(v) for k, v in out.items()}
+    return out
+
+def get_sample_path(cls, fname):
+    local = os.path.join(SAMPLES_DIR, cls, fname)
+    if os.path.exists(local):
+        return local
+    from huggingface_hub import hf_hub_download
+    return hf_hub_download(HF_SAMPLES_REPO, f"{cls}/{fname}", repo_type="dataset", token=_hf_token())
+
 if sumber == "Contoh data uji":
-    avail = [c for c in CLASSES if os.path.isdir(os.path.join(SAMPLES_DIR, c))]
-    if not avail:
-        st.info(f"Folder '{SAMPLES_DIR}/<nama_kelas>/' belum berisi video contoh.")
+    samples = list_samples()
+    if not samples:
+        st.info("Contoh data uji belum tersedia. Gunakan 'Unggah video'.")
     else:
         col1, col2 = st.columns(2)
-        cls = col1.selectbox("Kelas data uji", avail)
-        files = sorted(f for f in os.listdir(os.path.join(SAMPLES_DIR, cls)) if f.lower().endswith(".mp4"))
-        fname = col2.selectbox("Video", files)
-        video_path = os.path.join(SAMPLES_DIR, cls, fname)
+        cls = col1.selectbox("Kelas data uji", list(samples))
+        fname = col2.selectbox("Video", samples[cls])
+        video_path = get_sample_path(cls, fname)
         actual = cls
 else:
     up = st.file_uploader("Unggah file video (.mp4)", type=["mp4"])

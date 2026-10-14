@@ -149,7 +149,11 @@ def load_model(model_name):
         except Exception:
             token = None          # repo publik: tidak perlu token
         path = hf_hub_download(HF_REPO, os.path.basename(path), token=token)
-    state = torch.load(path, map_location=DEVICE)
+    try:
+        state = torch.load(path, map_location=DEVICE, weights_only=False)
+    except Exception as e:
+        size_mb = os.path.getsize(path) / 1e6
+        raise RuntimeError(f"Gagal membaca bobot '{os.path.basename(path)}' ({size_mb:.2f} MB): {e}")
     if isinstance(state, dict) and "model_state" in state:   # jika memakai file checkpoint_epXX.pth
         state = state["model_state"]
     model.load_state_dict(state)
@@ -346,3 +350,82 @@ if video_path:
                 st.error("Prediksi TIDAK SESUAI dengan label aktual.")
 else:
     st.caption("Pilih atau unggah video terlebih dahulu.")
+
+
+# ============================================================
+# Evaluasi batch: seluruh contoh data uji dari keempat kelas
+# ============================================================
+@st.cache_data(show_spinner=False)
+def evaluate_batch(model_name, samples_json):
+    import json
+    samples_ = json.loads(samples_json)
+    items = [(c, f) for c, fs in samples_.items() for f in fs]
+    model = load_model(model_name)
+    rows = []
+    bar = st.progress(0.0, text="Memproses video...")
+    for i, (c, f) in enumerate(items):
+        path = get_sample_path(c, f)
+        frames = extract_frames(path)
+        wave = extract_waveform(path)
+        if frames is None:
+            rows.append({"Video": f, "Label Aktual": c, "Prediksi": "(gagal dibaca)",
+                         "Probabilitas (%)": 0.0, "Hasil": "Gagal", "Waktu Model (ms)": 0.0})
+        else:
+            if wave is None:
+                wave = torch.zeros(1, 1, AUDIO_LEN)
+            probs, tm = run_inference(model, frames, wave)
+            pred = CLASSES[int(np.argmax(probs))]
+            rows.append({"Video": f, "Label Aktual": c, "Prediksi": pred,
+                         "Probabilitas (%)": round(float(probs.max()) * 100, 2),
+                         "Hasil": "Benar" if pred == c else "Salah",
+                         "Waktu Model (ms)": round(tm * 1000, 1)})
+        bar.progress((i + 1) / len(items), text=f"Memproses video {i + 1}/{len(items)}")
+    bar.empty()
+    return pd.DataFrame(rows)
+
+
+def show_batch_result(df):
+    valid = df[df["Hasil"] != "Gagal"]
+    acc = (valid["Hasil"] == "Benar").mean() * 100 if len(valid) else 0.0
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Akurasi", f"{acc:.2f}%")
+    c2.metric("Jumlah Video", len(df))
+    c3.metric("Rata-rata Waktu Model", f"{valid['Waktu Model (ms)'].mean():.1f} ms" if len(valid) else "-")
+
+    st.markdown("**Ringkasan per kelas**")
+    per = valid.groupby("Label Aktual").agg(
+        Total=("Hasil", "size"), Benar=("Hasil", lambda x: int((x == "Benar").sum())))
+    per["Akurasi (%)"] = (per["Benar"] / per["Total"] * 100).round(2)
+    st.dataframe(per.reindex([c for c in CLASSES if c in per.index]), use_container_width=True)
+
+    st.markdown("**Confusion matrix** (baris = aktual, kolom = prediksi)")
+    cm = pd.crosstab(valid["Label Aktual"], valid["Prediksi"]).reindex(
+        index=CLASSES, columns=CLASSES, fill_value=0)
+    st.dataframe(cm, use_container_width=True)
+
+    st.markdown("**Detail per video**")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+if mode == "Evaluasi":
+    st.divider()
+    st.header("Evaluasi Seluruh Contoh Data Uji")
+    all_samples = list_samples()
+    if not all_samples:
+        st.info("Contoh data uji belum tersedia.")
+    else:
+        import json
+        n_vid = sum(len(v) for v in all_samples.values())
+        st.caption(f"{n_vid} video dari {len(all_samples)} kelas.")
+        bandingkan = st.checkbox("Bandingkan kedua model")
+        if st.button("Evaluasi Semua Kelas", type="primary"):
+            key = json.dumps(all_samples, sort_keys=True)
+            if bandingkan:
+                cols = st.columns(2)
+                for col, name in zip(cols, MODEL_FILES):
+                    with col:
+                        st.subheader(name)
+                        show_batch_result(evaluate_batch(name, key))
+            else:
+                st.subheader(model_name)
+                show_batch_result(evaluate_batch(model_name, key))

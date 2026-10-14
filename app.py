@@ -36,6 +36,7 @@ SAMPLES_DIR = "samples"       # samples/<nama_kelas>/*.mp4
 # Bobot model diambil dari Hugging Face jika file lokal tidak ada.
 # GANTI dengan repo kamu, format "username/nama-repo".
 HF_REPO = "pingkannadia/deepfake-model-weights"
+HF_SAMPLES_REPO = "pingkannadia/deepfake-samples"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 

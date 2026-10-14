@@ -251,10 +251,9 @@ with st.sidebar:
     st.header("Panel Kontrol")
     mode = st.radio("Mode Aktif", ["Klasifikasi", "Evaluasi"])
     model_name = st.radio("Model Aktif", list(MODEL_FILES))
-    st.markdown("**Legenda Kelas**")
+    st.markdown("**Kelas**")
     for c in CLASSES:
         st.markdown(f"- {c}")
-    st.caption(f"Perangkat: {DEVICE.upper()}")
 
 st.title("Klasifikasi Deepfake Audio-Visual")
 

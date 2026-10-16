@@ -251,9 +251,10 @@ with st.sidebar:
     st.header("Panel Kontrol")
     mode = st.radio("Mode Aktif", ["Klasifikasi", "Evaluasi"])
     model_name = st.radio("Model Aktif", list(MODEL_FILES))
-    st.markdown("**Kelas**")
+    st.markdown("**Legenda Kelas**")
     for c in CLASSES:
         st.markdown(f"- {c}")
+    st.caption(f"Perangkat: {DEVICE.upper()}")
 
 st.title("Klasifikasi Deepfake Audio-Visual")
 
@@ -311,8 +312,31 @@ else:
     if mode == "Evaluasi":
         actual = st.selectbox("Label aktual video", CLASSES)
 
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def preview_bytes(path):
+    """Transkode video ke H.264/AAC agar bisa diputar di browser (khusus pratinjau).
+    Klasifikasi tetap memakai file asli. Jika gagal, kembalikan file asli."""
+    import subprocess, shutil, hashlib
+    try:
+        exe = shutil.which("ffmpeg")
+        if exe is None:
+            import imageio_ffmpeg
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+        out = os.path.join(tempfile.gettempdir(), "prev_" + hashlib.md5(path.encode()).hexdigest() + ".mp4")
+        if not os.path.exists(out):
+            subprocess.run([exe, "-y", "-v", "error", "-i", path, "-t", "15",
+                            "-vf", "scale='min(640,iw)':-2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-preset", "ultrafast", "-crf", "28", "-c:a", "aac", "-movflags", "+faststart", out],
+                           check=True, capture_output=True)
+        with open(out, "rb") as f:
+            return f.read()
+    except Exception:
+        with open(path, "rb") as f:
+            return f.read()
+
 if video_path:
-    st.video(video_path)
+    st.video(preview_bytes(video_path), format="video/mp4")
     if st.button("Klasifikasi", type="primary"):
         with st.spinner("Memproses video..."):
             t0 = time.perf_counter()

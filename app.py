@@ -251,10 +251,9 @@ with st.sidebar:
     st.header("Panel Kontrol")
     mode = st.radio("Mode Aktif", ["Klasifikasi", "Evaluasi"])
     model_name = st.radio("Model Aktif", list(MODEL_FILES))
-    st.markdown("**Legenda Kelas**")
+    st.markdown("**Kelas**")
     for c in CLASSES:
         st.markdown(f"- {c}")
-    st.caption(f"Perangkat: {DEVICE.upper()}")
 
 st.title("Klasifikasi Deepfake Audio-Visual")
 
@@ -336,8 +335,11 @@ def preview_bytes(path):
             return f.read()
 
 if video_path:
-    st.video(preview_bytes(video_path), format="video/mp4")
-    if st.button("Klasifikasi", type="primary"):
+    vcol, _ = st.columns([2, 3])          # pratinjau dipersempit agar tombol tidak perlu scroll
+    with vcol:
+        st.video(preview_bytes(video_path), format="video/mp4")
+        clicked = st.button("Klasifikasi", type="primary")
+    if clicked:
         with st.spinner("Memproses video..."):
             t0 = time.perf_counter()
             frames = extract_frames(video_path)

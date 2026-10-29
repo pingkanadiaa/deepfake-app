@@ -358,13 +358,14 @@ if video_path:
 
         pred = CLASSES[int(np.argmax(probs))]
         st.subheader("Hasil Klasifikasi")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Kelas Prediksi", pred)
-        m2.metric("Probabilitas", f"{probs.max() * 100:.2f}%")
-        m3.metric("Waktu Inferensi Model", f"{t_model * 1000:.1f} ms")
-        m4.metric("Waktu Praproses", f"{t_pre:.2f} detik")
-
-        st.bar_chart(pd.DataFrame({"Probabilitas": probs}, index=CLASSES))
+        vis_fake = pred.startswith("FakeVideo")
+        aud_fake = pred.endswith("FakeAudio")
+        if not vis_fake and not aud_fake:
+            st.success(f"**{pred}**: gambar dan suara terdeteksi ASLI.")
+        else:
+            st.error(f"**{pred}**: gambar {'PALSU' if vis_fake else 'asli'}, "
+                     f"suara {'PALSU' if aud_fake else 'asli'}.")
+        st.metric("Tingkat keyakinan model", f"{probs.max() * 100:.1f}%")
 
         if mode == "Evaluasi" and actual is not None:
             st.subheader("Evaluasi")
@@ -373,6 +374,11 @@ if video_path:
                 st.success("Prediksi SESUAI dengan label aktual.")
             else:
                 st.error("Prediksi TIDAK SESUAI dengan label aktual.")
+
+        with st.expander("Detail teknis (opsional)"):
+            st.bar_chart(pd.DataFrame({"Probabilitas": probs}, index=CLASSES))
+            st.caption(f"Waktu inferensi model: {t_model * 1000:.1f} ms | "
+                       f"waktu praproses: {t_pre:.2f} detik")
 else:
     st.caption("Pilih atau unggah video terlebih dahulu.")
 
@@ -411,25 +417,26 @@ def evaluate_batch(model_name, samples_json):
 
 def show_batch_result(df):
     valid = df[df["Hasil"] != "Gagal"]
-    acc = (valid["Hasil"] == "Benar").mean() * 100 if len(valid) else 0.0
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Akurasi", f"{acc:.2f}%")
-    c2.metric("Jumlah Video", len(df))
-    c3.metric("Rata-rata Waktu Model", f"{valid['Waktu Model (ms)'].mean():.1f} ms" if len(valid) else "-")
+    n_ok = int((valid["Hasil"] == "Benar").sum())
+    acc = n_ok / len(valid) * 100 if len(valid) else 0.0
+    c1, c2 = st.columns(2)
+    c1.metric("Akurasi", f"{acc:.1f}%")
+    c2.metric("Prediksi benar", f"{n_ok} dari {len(valid)} video")
 
-    st.markdown("**Ringkasan per kelas**")
     per = valid.groupby("Label Aktual").agg(
         Total=("Hasil", "size"), Benar=("Hasil", lambda x: int((x == "Benar").sum())))
-    per["Akurasi (%)"] = (per["Benar"] / per["Total"] * 100).round(2)
-    st.dataframe(per.reindex([c for c in CLASSES if c in per.index]), use_container_width=True)
+    per["Akurasi (%)"] = (per["Benar"] / per["Total"] * 100).round(1)
+    per = per.reindex([c for c in CLASSES if c in per.index])
+    per.index.name = "Kelas"
+    st.markdown("**Hasil per kelas**")
+    st.dataframe(per, use_container_width=True)
 
-    st.markdown("**Confusion matrix** (baris = aktual, kolom = prediksi)")
-    cm = pd.crosstab(valid["Label Aktual"], valid["Prediksi"]).reindex(
-        index=CLASSES, columns=CLASSES, fill_value=0)
-    st.dataframe(cm, use_container_width=True)
-
-    st.markdown("**Detail per video**")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    with st.expander("Detail lanjutan (confusion matrix dan per video)"):
+        st.markdown("Confusion matrix (baris = aktual, kolom = prediksi)")
+        cm = pd.crosstab(valid["Label Aktual"], valid["Prediksi"]).reindex(
+            index=CLASSES, columns=CLASSES, fill_value=0)
+        st.dataframe(cm, use_container_width=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 if mode == "Evaluasi":
